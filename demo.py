@@ -172,49 +172,52 @@ def extract_outcomes(sims, report_start=INTERVENTION_START, report_end=END_YEAR)
 
 
 def plot(df, out='figures/pp_one_stop_shop.png'):
-    """Two-panel figure: FP outcomes (Panel A) + HIV outcomes (Panel B)."""
+    """Two-panel figure: births + HIV infections averted vs baseline per scenario."""
     import pylab as pl
     os.makedirs(os.path.dirname(out), exist_ok=True)
 
-    scen_labels = {
-        'baseline': 'Baseline',
-        'pp_fp':    'PP-FP',
-        'pp_prep':  'PP-PrEP',
-        'pp_both':  'PP-both',
-    }
-    order = [s for s in SCENARIOS if s in df.scenario.unique()]
-    x = np.arange(len(order))
+    scen_labels = {'pp_fp': 'PP-FP', 'pp_prep': 'PP-PrEP', 'pp_both': 'PP-both'}
+    scenarios = [s for s in ['pp_fp', 'pp_prep', 'pp_both'] if s in df.scenario.unique()]
 
-    base = df[df.scenario == 'baseline'].mean(numeric_only=True)
-    agg = df.groupby('scenario').agg(['mean', 'min', 'max'])
+    # Per-seed averted (paired against same-seed baseline).
+    base = df[df.scenario == 'baseline'].set_index('seed')
+    averted = {}
+    for scen in scenarios:
+        d = df[df.scenario == scen].set_index('seed')
+        averted[scen] = pd.DataFrame({
+            'births_averted': base['live_births'] - d['live_births'],
+            'short_intervals_averted': base['short_intervals'] - d['short_intervals'],
+            'infections_averted': base['new_infections_f'] - d['new_infections_f'],
+        })
+
+    def bars(ax, metric, color):
+        x = np.arange(len(scenarios))
+        means = [averted[s][metric].mean() for s in scenarios]
+        lo = [averted[s][metric].min() for s in scenarios]
+        hi = [averted[s][metric].max() for s in scenarios]
+        yerr = [np.array(means) - np.array(lo), np.array(hi) - np.array(means)]
+        ax.bar(x, means, yerr=yerr, capsize=4, color=color)
+        ax.axhline(0, color='k', lw=0.5)
+        ax.set_xticks(x)
+        ax.set_xticklabels([scen_labels[s] for s in scenarios])
+        for i, m in enumerate(means):
+            ax.text(i, m, f' {m:+.0f}', va='bottom' if m >= 0 else 'top', ha='center', fontsize=10)
 
     fig, axes = pl.subplots(1, 2, figsize=(12, 5))
+    bars(axes[0], 'births_averted', '#4C72B0')
+    axes[0].set_ylabel(f'Live births averted\n({INTERVENTION_START}–{END_YEAR}, vs baseline)')
+    axes[0].set_title('Panel A — Family Planning')
 
-    # Panel A: FP
-    ax = axes[0]
-    means = [agg.loc[s, ('short_intervals', 'mean')] for s in order]
-    lo = [agg.loc[s, ('short_intervals', 'min')] for s in order]
-    hi = [agg.loc[s, ('short_intervals', 'max')] for s in order]
-    ax.bar(x, means, yerr=[np.array(means) - lo, np.array(hi) - means], capsize=4, color='#4C72B0')
-    ax.set_xticks(x)
-    ax.set_xticklabels([scen_labels[s] for s in order])
-    ax.set_ylabel(f'Short birth intervals <24mo\n({INTERVENTION_START}–{END_YEAR}, cumulative)')
-    ax.set_title('Panel A — Family Planning')
-    ax.set_ylim(bottom=0)
+    bars(axes[1], 'infections_averted', '#C44E52')
+    axes[1].set_ylabel(f'New female HIV infections averted\n({INTERVENTION_START}–{END_YEAR}, vs baseline)')
+    axes[1].set_title('Panel B — HIV')
 
-    # Panel B: HIV
-    ax = axes[1]
-    means = [agg.loc[s, ('new_infections_f', 'mean')] for s in order]
-    lo = [agg.loc[s, ('new_infections_f', 'min')] for s in order]
-    hi = [agg.loc[s, ('new_infections_f', 'max')] for s in order]
-    ax.bar(x, means, yerr=[np.array(means) - lo, np.array(hi) - means], capsize=4, color='#C44E52')
-    ax.set_xticks(x)
-    ax.set_xticklabels([scen_labels[s] for s in order])
-    ax.set_ylabel(f'New female HIV infections\n({INTERVENTION_START}–{END_YEAR}, cumulative)')
-    ax.set_title('Panel B — HIV')
-    ax.set_ylim(bottom=0)
-
-    fig.suptitle('Postpartum one-stop shop, Kenya — illustrative', y=1.02)
+    base_births = int(base['live_births'].mean())
+    base_inf = int(base['new_infections_f'].mean())
+    fig.suptitle(
+        f'Postpartum one-stop shop, Kenya — illustrative  '
+        f'(baseline mean: {base_births:,} live births, {base_inf:,} new female HIV infections)',
+        y=1.02, fontsize=11)
     fig.tight_layout()
     fig.savefig(out, dpi=120, bbox_inches='tight')
     print(f'saved {out}')
