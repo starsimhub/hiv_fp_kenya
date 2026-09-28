@@ -8,6 +8,8 @@ __pycache__/
 results/
 raw_results/
 figures/
-*.obj
-*.df
 tmp_*
+
+# Bulk objects (allow data/ inputs like the calibration blob)
+/*.obj
+/*.df
