@@ -1,9 +1,17 @@
 """
-FPsim + STIsim postpartum "one-stop shop" demo, Kenya.
+FPsim + calibrated STIsim postpartum "one-stop shop" demo, Kenya.
 
-Illustrative — HIV is hand-tuned, not calibrated. See
-docs/postpartum_one_stop_shop_spec.md for scope, gotchas, and scenario
-definitions.
+- HIV configuration and calibrated parameters imported from hiv_kenya
+  (see data/kenya_hiv_calib.obj; best-mismatch draw, row 0).
+- FP engine is fpsim's FPmod via fp.Sim(location='kenya').
+- Two arms: `baseline` (calibrated HIV + hiv_kenya's testing/ART/PrEP
+  scale-up) vs `pp_shop` (same, plus a one-stop shop at 2 months
+  postpartum that offers LA injectable contraception + LA PrEP to the
+  same attendees).
+
+The hiv_kenya calibration overshoots on PLHIV and prevalence but tracks
+annual new infections and HIV deaths — appropriate for an illustrative
+demo, not a national projection.
 """
 
 import os
@@ -21,23 +29,24 @@ import starsim as ss
 import stisim as sti
 import fpsim as fp
 
+from interventions import make_hiv_intvs
 
-SCENARIOS = ['baseline', 'pp_fp', 'pp_prep', 'pp_both']
-N_SEEDS = 3
+
+SCENARIOS = ['baseline', 'pp_shop']
+N_SEEDS = 5
 N_AGENTS = 20_000
-START_YEAR = 2000
-END_YEAR = 2035
+START_YEAR = 1985  # matches hiv_kenya calibration; init_prev_hiv.csv is a 1985-appropriate prevalence
+END_YEAR = 2040
 INTERVENTION_START = 2027
+CALIB_DRAW_IDX = 0
 
 
 class PostnatalPackage(ss.Intervention):
-    """Offer LA injectable contraception + LA PrEP at a postnatal visit."""
+    """Offer LA injectable contraception + LA PrEP at a 2-mo postnatal visit."""
 
-    def __init__(self, pars=None, name='pp_package', **kwargs):
+    def __init__(self, pars=None, name='pp_shop', **kwargs):
         super().__init__(name=name)
         self.define_pars(
-            offer_fp=True,
-            offer_prep=True,
             visit_month=2,
             start_year=INTERVENTION_START,
             p_attend=ss.bernoulli(p=0.5),
@@ -65,69 +74,68 @@ class PostnatalPackage(ss.Intervention):
         )
 
     def step(self):
-        # Gate on calendar year at the sim level (not the intervention's own timeline).
         if self.sim.t.now('year') < self.pars.start_year:
             return
 
-        fp_mod = self.fp_mod
-        hiv = self.hiv
-        # ti_live_birth lives on the sim's timeline; compare against sim.ti, not self.ti.
+        fp_mod, hiv = self.fp_mod, self.hiv
         sim_ti = self.sim.ti
         target_ti = sim_ti - self.pars.visit_month
 
-        alive = self.sim.people.alive
-        mask = (fp_mod.ti_live_birth == target_ti) & alive & ~fp_mod.pregnant
-        eligible = ss.uids(np.where(mask)[0])
+        eligible = ((fp_mod.ti_live_birth == target_ti) & ~fp_mod.pregnant).uids
         attendees = self.pars.p_attend.filter(eligible)
-        n_att = len(attendees)
-        self.results.n_attended[self.ti] = n_att
+        self.results.n_attended[self.ti] = len(attendees)
 
-        if n_att == 0:
+        if len(attendees) == 0:
             return
 
-        if self.pars.offer_fp:
-            not_on_method = attendees[~fp_mod.on_contra[attendees]]
-            starters = self.pars.p_fp_uptake.filter(not_on_method)
-            if len(starters):
-                fp_mod.on_contra[starters] = True
-                fp_mod.method[starters] = self.inj_idx
-                fp_mod.ever_used_contra[starters] = 1
-                # ti_contra is a sim-timeline state; use sim.ti as the base.
-                fp_mod.ti_contra[starters] = sim_ti + self.cm.set_dur_method(starters)
-            self.results.n_fp_started[self.ti] = len(starters)
+        # FP arm: start injectables among attendees not already on a method.
+        not_on_method = attendees[~fp_mod.on_contra[attendees]]
+        fp_starters = self.pars.p_fp_uptake.filter(not_on_method)
+        if len(fp_starters):
+            fp_mod.on_contra[fp_starters] = True
+            fp_mod.method[fp_starters] = self.inj_idx
+            fp_mod.ever_used_contra[fp_starters] = 1
+            fp_mod.ti_contra[fp_starters] = sim_ti + self.cm.set_dur_method(fp_starters)
+        self.results.n_fp_started[self.ti] = len(fp_starters)
 
-        if self.pars.offer_prep:
-            hiv_neg = attendees[~hiv.infected[attendees] & ~hiv.on_prep[attendees]]
-            starters = self.pars.p_prep_uptake.filter(hiv_neg)
-            if len(starters):
-                # start_prep expects a scalar ss.Dur; one draw per visit day.
-                # ss.normal(ss.months(6), ss.months(1)).rvs() returns floats
-                # in years, so wrap in ss.years to match the API.
-                dur = ss.years(self.pars.dur_prep.rvs(1)[0])
-                hiv.start_prep(
-                    starters,
-                    eff=self.pars.prep_eff,
-                    dur=dur,
-                    source_id=self._prep_source,
-                    adh=1.0,
-                )
-            self.results.n_prep_started[self.ti] = len(starters)
+        # PrEP arm: start a course among HIV-neg attendees not already on PrEP.
+        hiv_neg = attendees[~hiv.infected[attendees] & ~hiv.on_prep[attendees]]
+        prep_starters = self.pars.p_prep_uptake.filter(hiv_neg)
+        if len(prep_starters):
+            # Per-uid duration draw; wrap in ss.years so the array is Dur-typed
+            # (raw numpy floats give a `freq` object when divided by dt).
+            dur = ss.years(self.pars.dur_prep.rvs(prep_starters))
+            hiv.start_prep(prep_starters, eff=self.pars.prep_eff, dur=dur,
+                          source_id=self._prep_source, adh=1.0)
+        self.results.n_prep_started[self.ti] = len(prep_starters)
 
 
-def make_sim(scenario, seed, n_agents=N_AGENTS, start_year=START_YEAR, end_year=END_YEAR):
+def _load_calib_pars(idx=CALIB_DRAW_IDX):
+    calib = sc.loadobj('data/kenya_hiv_calib.obj')
+    return calib.df.iloc[idx].to_dict()
+
+
+def make_sim(scenario, seed, n_agents=N_AGENTS, start_year=START_YEAR, end_year=END_YEAR,
+             calib_idx=CALIB_DRAW_IDX, extra_analyzers=None):
     hiv = sti.HIV(
-        init_prev=ss.bernoulli(0.04),
-        beta_m2f=0.015,
+        beta_m2f=0.012,          # overwritten by calib
+        eff_condom=0.5,           # overwritten by calib
+        init_prev_data=pd.read_csv('data/init_prev_hiv.csv'),
+        rel_init_prev=0.5,
+        age_bins=[0, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 100],
     )
-    intvs = [
-        sti.HIVTest(test_prob_data=0.12, name='hiv_test'),
-        sti.ART(coverage={'year': [2000, 2010, 2020, 2035], 'value': [0, 0.3, 0.7, 0.9]}),
-    ]
-    if scenario != 'baseline':
-        intvs.append(PostnatalPackage(
-            offer_fp=scenario in ('pp_fp', 'pp_both'),
-            offer_prep=scenario in ('pp_prep', 'pp_both'),
-        ))
+    nw = sti.StructuredSexual(
+        prop_f0=0.79,             # overwritten by calib
+        prop_m0=0.75,             # overwritten by calib
+        f1_conc=0.15,             # overwritten by calib
+        m1_conc=0.15,             # overwritten by calib
+        p_pair_form=0.5,          # overwritten by calib
+        condom_data=pd.read_csv('data/condom_use.csv'),
+    )
+
+    intvs = make_hiv_intvs()
+    if scenario == 'pp_shop':
+        intvs.append(PostnatalPackage())
 
     pars = dict(
         location='kenya',
@@ -136,87 +144,108 @@ def make_sim(scenario, seed, n_agents=N_AGENTS, start_year=START_YEAR, end_year=
         end_year=end_year,
         rand_seed=seed,
     )
-    return fp.Sim(
+    sim = fp.Sim(
         pars=pars,
         diseases=hiv,
-        networks=[sti.StructuredSexual(), ss.MaternalNet()],
+        networks=[nw, ss.MaternalNet()],
         interventions=intvs,
+        analyzers=list(extra_analyzers) if extra_analyzers else None,
         label=f'{scenario}_seed{seed}',
     )
+    sim = sti.default_build_fn(sim, _load_calib_pars(calib_idx))
+    return sim
 
 
 def run_grid(scenarios=SCENARIOS, n_seeds=N_SEEDS, **make_sim_kwargs):
-    sims = []
-    for scen in scenarios:
-        for seed in range(n_seeds):
-            sims.append(make_sim(scen, seed, **make_sim_kwargs))
+    sims = [make_sim(s, k, **make_sim_kwargs) for s in scenarios for k in range(n_seeds)]
     return ss.parallel(sims).sims
 
 
+KENYA_POP_2020 = 55_000_000  # for scaling sim to national counts
+
+
+def _kenya_scale(sim, ref_year=2020):
+    """fp.Sim doesn't set pop_scale, so results are in raw agents. Compute a
+    scale factor from the sim's alive population vs Kenya's real population at
+    a reference year."""
+    tv = np.asarray([t.year for t in sim.results.timevec])
+    idx = int(np.where(tv >= ref_year)[0][0])
+    n_alive_sim = float(sim.results.n_alive[idx])
+    return KENYA_POP_2020 / n_alive_sim
+
+
 def extract_outcomes(sims, report_start=INTERVENTION_START, report_end=END_YEAR):
-    """Per-sim scalar outcomes across the reporting window."""
+    """Per-sim scalar outcomes across the reporting window, scaled to Kenya."""
     rows = []
     for sim in sims:
         scen, seed = sim.label.rsplit('_seed', 1)
-        yrs = np.asarray([t.year for t in sim.results.timevec])
-        m = (yrs >= report_start) & (yrs <= report_end)
+        scale = _kenya_scale(sim)
+        # Annualize each flow so sums over years are unambiguous
+        new_inf_f = sim.results.hiv.new_infections_f.annualize()
+        new_inf = sim.results.hiv.new_infections.annualize()
+        births = sim.results.fp.births.annualize()
+        short_int = sim.results.fp.short_intervals.annualize()
+        # timevec for annualized results is integer-year-valued
+        tv = np.asarray(new_inf_f.timevec)
+        m = (tv >= report_start) & (tv <= report_end)
         rows.append(dict(
             scenario=scen,
             seed=int(seed),
-            live_births=int(np.asarray(sim.results.fp.births)[m].sum()),
-            short_intervals=int(np.asarray(sim.results.fp.short_intervals)[m].sum()),
-            new_infections_f=int(np.asarray(sim.results.hiv.new_infections_f)[m].sum()),
-            new_infections_postnatal=int(np.asarray(sim.results.hiv.new_infections_postnatal)[m].sum()),
+            scale=scale,
+            # Sim-scale raw values
+            live_births_sim=births[m].sum(),
+            short_intervals_sim=short_int[m].sum(),
+            new_infections_f_sim=new_inf_f[m].sum(),
+            new_infections_sim=new_inf[m].sum(),
+            # Kenya-scale
+            live_births=births[m].sum() * scale,
+            short_intervals=short_int[m].sum() * scale,
+            new_infections_f=new_inf_f[m].sum() * scale,
+            new_infections=new_inf[m].sum() * scale,
         ))
     return pd.DataFrame(rows)
 
 
 def plot(df, out='figures/pp_one_stop_shop.png'):
-    """Two-panel figure: births + HIV infections averted vs baseline per scenario."""
+    """Two-panel: short intervals + female HIV infections averted vs baseline,
+    reported at Kenya scale (sim × Kenya_pop / sim_pop_2020)."""
     import pylab as pl
     os.makedirs(os.path.dirname(out), exist_ok=True)
 
-    scen_labels = {'pp_fp': 'PP-FP', 'pp_prep': 'PP-PrEP', 'pp_both': 'PP-both'}
-    scenarios = [s for s in ['pp_fp', 'pp_prep', 'pp_both'] if s in df.scenario.unique()]
-
-    # Per-seed averted (paired against same-seed baseline).
     base = df[df.scenario == 'baseline'].set_index('seed')
-    averted = {}
-    for scen in scenarios:
-        d = df[df.scenario == scen].set_index('seed')
-        averted[scen] = pd.DataFrame({
-            'births_averted': base['live_births'] - d['live_births'],
-            'short_intervals_averted': base['short_intervals'] - d['short_intervals'],
-            'infections_averted': base['new_infections_f'] - d['new_infections_f'],
-        })
+    d = df[df.scenario == 'pp_shop'].set_index('seed')
+    averted = pd.DataFrame({
+        'short_intervals_averted': base['short_intervals'] - d['short_intervals'],
+        'infections_averted': base['new_infections_f'] - d['new_infections_f'],
+    })
 
-    def bars(ax, metric, color):
-        x = np.arange(len(scenarios))
-        means = [averted[s][metric].mean() for s in scenarios]
-        lo = [averted[s][metric].min() for s in scenarios]
-        hi = [averted[s][metric].max() for s in scenarios]
-        yerr = [np.array(means) - np.array(lo), np.array(hi) - np.array(means)]
-        ax.bar(x, means, yerr=yerr, capsize=4, color=color)
+    def bar(ax, metric, color, ylabel):
+        vals = averted[metric]
+        m, lo, hi = vals.mean(), vals.min(), vals.max()
+        ax.bar([0], [m], yerr=[[m - lo], [hi - m]], capsize=6, color=color, width=0.5)
         ax.axhline(0, color='k', lw=0.5)
-        ax.set_xticks(x)
-        ax.set_xticklabels([scen_labels[s] for s in scenarios])
-        for i, m in enumerate(means):
-            ax.text(i, m, f' {m:+.0f}', va='bottom' if m >= 0 else 'top', ha='center', fontsize=10)
+        ax.text(0, m, f'  {m:+,.0f}\n  (range {lo:,.0f} to {hi:,.0f})',
+                va='bottom' if m >= 0 else 'top', ha='left', fontsize=10)
+        ax.set_xticks([0])
+        ax.set_xticklabels(['PP one-stop shop'])
+        ax.set_ylabel(ylabel)
+        ax.set_xlim(-0.5, 1.5)
 
-    fig, axes = pl.subplots(1, 2, figsize=(12, 5))
-    bars(axes[0], 'births_averted', '#4C72B0')
-    axes[0].set_ylabel(f'Live births averted\n({INTERVENTION_START}–{END_YEAR}, vs baseline)')
+    fig, axes = pl.subplots(1, 2, figsize=(11, 5))
+    bar(axes[0], 'short_intervals_averted', '#4C72B0',
+        f'Short birth intervals (<24 mo) averted\n({INTERVENTION_START}–{END_YEAR}, Kenya scale)')
     axes[0].set_title('Panel A — Family Planning')
-
-    bars(axes[1], 'infections_averted', '#C44E52')
-    axes[1].set_ylabel(f'New female HIV infections averted\n({INTERVENTION_START}–{END_YEAR}, vs baseline)')
+    bar(axes[1], 'infections_averted', '#C44E52',
+        f'New female HIV infections averted\n({INTERVENTION_START}–{END_YEAR}, Kenya scale)')
     axes[1].set_title('Panel B — HIV')
 
-    base_births = int(base['live_births'].mean())
+    base_si = int(base['short_intervals'].mean())
     base_inf = int(base['new_infections_f'].mean())
+    scale = float(base['scale'].mean())
     fig.suptitle(
-        f'Postpartum one-stop shop, Kenya — illustrative  '
-        f'(baseline mean: {base_births:,} live births, {base_inf:,} new female HIV infections)',
+        f'Postpartum one-stop shop, Kenya — calibrated HIV, scaled 1:{scale:,.0f} to national pop\n'
+        f'Baseline mean {INTERVENTION_START}–{END_YEAR}: {base_si:,} short-interval births, '
+        f'{base_inf:,} new female HIV infections ({N_SEEDS} seeds)',
         y=1.02, fontsize=11)
     fig.tight_layout()
     fig.savefig(out, dpi=120, bbox_inches='tight')
