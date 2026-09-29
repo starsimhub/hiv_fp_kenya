@@ -2,7 +2,9 @@
 
 ## Motivation
 
-Postpartum women in Kenya face two co-occurring health risks. First, closely-spaced pregnancies: 26% of live births in Kenya follow a preceding pregnancy by less than 24 months (Kenya DHS), a spacing pattern associated with elevated maternal, neonatal, and infant risk. Second, elevated HIV risk during the postpartum period, both to the mother and (via MTCT and postnatal transmission) to the child. Existing postnatal contact points reach a large share of women but rarely deliver contraception and HIV prevention together, and 61% of women in the postpartum window in the sim are not using any contraceptive method.
+Postpartum women in Kenya face two co-occurring health risks. First, closely-spaced pregnancies: 26% of live births in Kenya follow a preceding pregnancy by less than 24 months (Kenya DHS), a spacing pattern associated with elevated maternal, neonatal, and infant risk. Second, elevated HIV risk during the postpartum period, both to the mother and (via MTCT and postnatal transmission) to the child. Existing postnatal contact points reach a large share of women but rarely deliver contraception and HIV prevention together.
+
+Injectable contraception is Kenya's most popular modern method, chosen by **34% of current contraceptive users** — tied with implants and well ahead of pills (8%), condoms (8%), and IUDs (3%) (Kenya DHS via FPsim's `mix.csv`). The preference is stronger postpartum: among women who initiate contraception in the first month after delivery, **~43% choose injectables** (n-weighted DHS average across age groups, `method_mix_matrix_switch.csv`). And despite this preference, **61% of women in the postpartum window in the sim are not using any contraceptive method** — a large unmet need at exactly the moment when injectable uptake is highest.
 
 Long-acting injectable contraception and long-acting PrEP could plausibly be co-delivered at the same postnatal visit. This analysis asks: *what could Kenya gain from bundling these two services at a single 2-month postpartum contact?*
 
