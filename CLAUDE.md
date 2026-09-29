@@ -1,23 +1,44 @@
 # CLAUDE.md
 
-Minimal FPsim + STIsim demo for a Kenya postpartum "one-stop shop" — a
-single figure showing that FPsim 3.6 (FPmod as `ss.Pregnancy`) runs in
-the same sim as STIsim HIV, with one postnatal intervention that
-delivers long-acting contraception + long-acting PrEP together.
+A pair of minimal FPsim v3.6 demos illustrating what the FPmod-as-`ss.Pregnancy`
+port unlocks when composed with other Starsim modules. Each demo is one script,
+one figure, one writeup.
 
-**Purpose is illustrative**, not calibrated for HIV and not for decisions.
+**Purpose is illustrative**, not calibrated for policy decisions.
 
-Full spec — question, scenarios, model setup, the `PostnatalPackage`
-intervention, known gotchas (including the stisim `hiv.py` name-lookup
-blocker) and the day-plan — is in
-[`docs/postpartum_one_stop_shop_spec.md`](docs/postpartum_one_stop_shop_spec.md).
-Read that before writing code.
+Two analyses share this repo:
+
+- **Analysis 1 — postpartum HIV/FP one-stop shop** (`demo.py`, spec:
+  [`docs/postpartum_one_stop_shop_spec.md`](docs/postpartum_one_stop_shop_spec.md),
+  writeup: [`docs/analysis_writeup.md`](docs/analysis_writeup.md)). Shows FPmod
+  running in the same sim as STIsim HIV; a single 2-mo postnatal contact
+  delivers long-acting contraception + long-acting PrEP.
+- **Analysis 2 — postpartum birth spacing → fetal health** (`demo_spacing.py`,
+  spec: [`docs/postpartum_spacing_fetal_spec.md`](docs/postpartum_spacing_fetal_spec.md),
+  writeup: [`docs/analysis_writeup_spacing.md`](docs/analysis_writeup_spacing.md)).
+  Same `PostnatalPackage` intervention (FP arm only), composed with starsim's
+  `ssl.mnch.FetalHealth` module and a new `SpacingFetalPenalty` connector that
+  reads interpregnancy interval at conception and penalises fetal growth /
+  timing when the interval is short.
+
+The `PostnatalPackage` in `demo.py` is the shared intervention — it takes
+`offer_fp` / `offer_prep` toggles so both analyses use the same class.
 
 ## State of play
 
-**Bootstrap.** Repo scaffolded 2026-09-28. No source code yet. Deliverable is
-tomorrow morning's SRH read-out: one two-panel figure comparing baseline
-vs PP-FP vs PP-PrEP vs PP-both.
+**Two illustrative analyses shipped.** Analysis 1 (2026-09-28): 5×2 scenario
+grid, HIV-calibrated, ~735k short-interval births averted / ~3.1k female HIV
+infections averted at Kenya scale. Analysis 2 (2026-09-29): 5×2 scenario grid,
+no HIV, ~487k short-interval births averted / ~2.4k LBW / ~5.2k preterm averted
+at Kenya scale.
+
+Two upstream one-liners pushed as branches during analysis 2 (both about the
+same class of name-lookup bug already documented for stisim/HIV):
+
+- `starsim@fix/fetalhealth-pregnancy-lookup` — FetalHealth used `sim.demographics.pregnancy` name lookup, which fails for FPmod (name `'fp'`).
+- `fpsim@fix/fpmod-fire-delivery-callbacks` — FPmod overrode `_post_delivery` without firing `_delivery_callbacks`.
+
+Neither PR has been opened; branches pushed only.
 
 ## Intake
 

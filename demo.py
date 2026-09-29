@@ -42,10 +42,12 @@ CALIB_DRAW_IDX = 0
 
 
 class PostnatalPackage(ss.Intervention):
-    """Offer LA injectable contraception + LA PrEP at a 2-mo postnatal visit."""
+    """Offer LA injectable contraception and/or LA PrEP at a 2-mo postnatal visit."""
 
-    def __init__(self, pars=None, name='pp_shop', **kwargs):
+    def __init__(self, pars=None, name='pp_shop', offer_fp=True, offer_prep=True, **kwargs):
         super().__init__(name=name)
+        self.offer_fp = offer_fp
+        self.offer_prep = offer_prep
         self.define_pars(
             visit_month=2,
             start_year=INTERVENTION_START,
@@ -60,9 +62,11 @@ class PostnatalPackage(ss.Intervention):
     def init_pre(self, sim):
         super().init_pre(sim)
         self.fp_mod = sim.demographics.fp
-        self.hiv = sim.diseases.hiv
         self.cm = sim.connectors.contraception
         self.inj_idx = self.cm.methods['inj'].idx
+        self.hiv = sim.diseases.get('hiv') if self.offer_prep else None
+        if self.offer_prep and self.hiv is None:
+            raise ValueError('PostnatalPackage(offer_prep=True) needs sti.HIV in the sim.')
         self._prep_source = abs(hash(self.name)) % 10_000_000
 
     def init_results(self):
@@ -77,7 +81,7 @@ class PostnatalPackage(ss.Intervention):
         if self.sim.t.now('year') < self.pars.start_year:
             return
 
-        fp_mod, hiv = self.fp_mod, self.hiv
+        fp_mod = self.fp_mod
         sim_ti = self.sim.ti
         target_ti = sim_ti - self.pars.visit_month
 
@@ -88,26 +92,27 @@ class PostnatalPackage(ss.Intervention):
         if len(attendees) == 0:
             return
 
-        # FP arm: start injectables among attendees not already on a method.
-        not_on_method = attendees[~fp_mod.on_contra[attendees]]
-        fp_starters = self.pars.p_fp_uptake.filter(not_on_method)
-        if len(fp_starters):
-            fp_mod.on_contra[fp_starters] = True
-            fp_mod.method[fp_starters] = self.inj_idx
-            fp_mod.ever_used_contra[fp_starters] = 1
-            fp_mod.ti_contra[fp_starters] = sim_ti + self.cm.set_dur_method(fp_starters)
-        self.results.n_fp_started[self.ti] = len(fp_starters)
+        if self.offer_fp:
+            not_on_method = attendees[~fp_mod.on_contra[attendees]]
+            fp_starters = self.pars.p_fp_uptake.filter(not_on_method)
+            if len(fp_starters):
+                fp_mod.on_contra[fp_starters] = True
+                fp_mod.method[fp_starters] = self.inj_idx
+                fp_mod.ever_used_contra[fp_starters] = 1
+                fp_mod.ti_contra[fp_starters] = sim_ti + self.cm.set_dur_method(fp_starters)
+            self.results.n_fp_started[self.ti] = len(fp_starters)
 
-        # PrEP arm: start a course among HIV-neg attendees not already on PrEP.
-        hiv_neg = attendees[~hiv.infected[attendees] & ~hiv.on_prep[attendees]]
-        prep_starters = self.pars.p_prep_uptake.filter(hiv_neg)
-        if len(prep_starters):
-            # Per-uid duration draw; wrap in ss.years so the array is Dur-typed
-            # (raw numpy floats give a `freq` object when divided by dt).
-            dur = ss.years(self.pars.dur_prep.rvs(prep_starters))
-            hiv.start_prep(prep_starters, eff=self.pars.prep_eff, dur=dur,
-                          source_id=self._prep_source, adh=1.0)
-        self.results.n_prep_started[self.ti] = len(prep_starters)
+        if self.offer_prep:
+            hiv = self.hiv
+            hiv_neg = attendees[~hiv.infected[attendees] & ~hiv.on_prep[attendees]]
+            prep_starters = self.pars.p_prep_uptake.filter(hiv_neg)
+            if len(prep_starters):
+                # Per-uid duration draw; wrap in ss.years so the array is Dur-typed
+                # (raw numpy floats give a `freq` object when divided by dt).
+                dur = ss.years(self.pars.dur_prep.rvs(prep_starters))
+                hiv.start_prep(prep_starters, eff=self.pars.prep_eff, dur=dur,
+                              source_id=self._prep_source, adh=1.0)
+            self.results.n_prep_started[self.ti] = len(prep_starters)
 
 
 def _load_calib_pars(idx=CALIB_DRAW_IDX):
