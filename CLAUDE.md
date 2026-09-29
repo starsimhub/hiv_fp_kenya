@@ -32,13 +32,13 @@ infections averted at Kenya scale. Analysis 2 (2026-09-29): 5×2 scenario grid,
 no HIV, ~487k short-interval births averted / ~2.4k LBW / ~5.2k preterm averted
 at Kenya scale.
 
-Two upstream one-liners pushed as branches during analysis 2 (both about the
-same class of name-lookup bug already documented for stisim/HIV):
+Three small fpsim fixes landed on `rc3.6-port` during analysis 2, all
+required to make FPsim + starsim's `FetalHealth` compose. Ship with 3.6.0.
+No starsim changes required.
 
-- `starsim@fix/fetalhealth-pregnancy-lookup` — FetalHealth used `sim.demographics.pregnancy` name lookup, which fails for FPmod (name `'fp'`).
-- `fpsim@fix/fpmod-fire-delivery-callbacks` — FPmod overrode `_post_delivery` without firing `_delivery_callbacks`.
-
-Neither PR has been opened; branches pushed only.
+- FPmod alias as `'pregnancy'` on `sim.demographics` and `sim.people` — fixes the same class of name-lookup miss documented for stisim/HIV in demo 1's spec.
+- `FPmod._post_delivery` fires `_delivery_callbacks`.
+- `ContraceptiveChoice.step` symmetric `on_contra` filter for pp1 / pp6.
 
 ## Intake
 

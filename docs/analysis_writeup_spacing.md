@@ -79,9 +79,8 @@ At placeholder uptake (50% attend × 30% method), scaling a 2-month postpartum c
 
 ## Upstream fixes required
 
-Two one-line bugs were fixed upstream to make FPsim + FetalHealth compose:
+Three small fpsim fixes make FPsim + starsim's `FetalHealth` compose. All landed on `rc3.6-port` and will ship with 3.6.0. No starsim changes required.
 
-- `starsim@fix/fetalhealth-pregnancy-lookup` — `FetalHealth` used to look up the pregnancy module by attribute name, which fails when FPmod (name `'fp'`) is the pregnancy module. Fixed by using `sim.get_module(ss.Pregnancy)`. Same class of bug as the stisim/HIV lookup already documented in `docs/postpartum_one_stop_shop_spec.md` §5.
-- `fpsim@fix/fpmod-fire-delivery-callbacks` — `FPmod._post_delivery` overrode the base hook but never fired `_delivery_callbacks`, so `FetalHealth.on_delivery` never ran. Fixed by adding the callback loop.
-
-Both branches pushed; PRs not opened.
+- **FPmod alias as `'pregnancy'`** — modules across the ecosystem (`FetalHealth`, stisim HIV / syphilis / BV / PregnancyRiskReduction / ANCSyphTest) look up the pregnancy module by attribute name. FPmod is registered as `'fp'`, so those lookups silently miss. FPsim now publishes FPmod under both `sim.demographics.pregnancy` and `sim.people.pregnancy` (via `ndict.setattribute` so `sim.modules` doesn't double-iterate).
+- **`FPmod._post_delivery` fires delivery callbacks** — base `ss.Pregnancy._post_delivery` fires `_delivery_callbacks`; FPmod's override didn't, so `FetalHealth.on_delivery` never ran.
+- **`ContraceptiveChoice.step` symmetric `on_contra` filter** — pp6 already excluded `on_contra` women, pp1 didn't; interventions that start a method inside the first month otherwise trip the pp1 assertion.

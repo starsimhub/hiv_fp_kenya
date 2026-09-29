@@ -76,17 +76,17 @@ Effect sizes chosen so that at Kenya's spacing distribution the baseline LBW rat
 - `_kenya_scale` — same 1:N scale factor from sim alive-count vs Kenya 2020 population.
 - `run_grid`, `plot`, `extract_outcomes` structure — parallel to `demo.py`.
 
-## 5. Upstream fixes needed
+## 5. Upstream fixes (both landed on fpsim `rc3.6-port`)
 
-**starsim `FetalHealth`** (`starsim/library/mnch/fetal_health.py`) looks up the pregnancy module by attribute name (`sim.demographics.pregnancy`, `sim.people.pregnancy`), which fails when FPmod is used (name `'fp'`). Fixed by caching `self.preg = sim.get_module(ss.Pregnancy)` in `init_pre` and using `self.preg` everywhere else, and by using `sim.get_module(ss.Pregnancy)` in `treat_pregnant.step` / `fetal_infection.step`.
+Three small fpsim fixes make FPsim + starsim's `FetalHealth` compose. All are on `rc3.6-port` and will ship with 3.6.0.
 
-Branch: `fix/fetalhealth-pregnancy-lookup`. Pushed, not PRed.
+**Alias FPmod as `'pregnancy'`.** Any starsim / stisim module that looks up the pregnancy module by attribute name (`sim.demographics.pregnancy`, `sim.people.pregnancy`) — which includes `FetalHealth`, stisim HIV, syphilis, BV, PregnancyRiskReduction, ANCSyphTest — fails when FPmod is registered as `'fp'`. Fixed by having `fp.Sim.init_module_attrs` publish FPmod under `demographics.pregnancy` via `ndict.setattribute` (bypasses the dict so `sim.modules` doesn't iterate FPmod twice), and having `FPmod.init_pre` set `sim.people.pregnancy = self`. 12 lines across `fpsim/sim.py` and `fpsim/fpmod.py`.
 
-**fpsim `FPmod._post_delivery`** (`fpsim/fpsim/fpmod.py`) overrides the base `_post_delivery` hook but never fires `_delivery_callbacks`, so `FetalHealth.on_delivery` never runs when FPmod is the pregnancy module. Fixed by adding the callback loop at the end of `FPmod._post_delivery`.
+**Fire delivery callbacks in `FPmod._post_delivery`.** The base `ss.Pregnancy._post_delivery` fires `_delivery_callbacks`; FPmod's override never called them, so `FetalHealth.on_delivery` (and any other registered delivery callback) silently no-op'd. Fixed by adding the callback loop at the end of FPmod's `_post_delivery`.
 
-Branch: `fix/fpmod-fire-delivery-callbacks`. Pushed, not PRed.
+**Symmetric `on_contra` filter for pp1 / pp6.** `ContraceptiveChoice.step` filtered `on_contra` women out of the pp6 branch but not pp1, so any postpartum intervention that starts a method inside the first month tripped the pp1 "postpartum women should not be on contraception" assertion. Fixed by applying the same filter to pp1.
 
-Both are one-liners and belong upstream — same class of bug as the stisim/HIV `'pregnancy' in self.sim.demographics` name lookup documented in `docs/postpartum_one_stop_shop_spec.md` §5.
+No starsim changes required.
 
 ## 6. Known limitations (found while building)
 
@@ -122,6 +122,7 @@ New:
 Modified:
 - `demo.py` — `PostnatalPackage` takes `offer_fp` / `offer_prep` toggles; HIV wiring guarded by `offer_prep`.
 
-Upstream (branched, pushed, not PRed):
-- `starsim@fix/fetalhealth-pregnancy-lookup`
-- `fpsim@fix/fpmod-fire-delivery-callbacks`
+Upstream (landed on `fpsim@rc3.6-port`, will ship with 3.6.0):
+- FPmod alias as `'pregnancy'` on `sim.demographics` and `sim.people`
+- FPmod `_post_delivery` fires `_delivery_callbacks`
+- `ContraceptiveChoice.step` filters `on_contra` from both pp1 and pp6
